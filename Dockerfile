@@ -11,7 +11,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
-COPY keys ./keys
+RUN mkdir -p ./keys
 COPY config ./config
 COPY updates ./updates
 RUN GOOS=linux GOARCH=amd64 go build -o main ./cmd/api
