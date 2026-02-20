@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"expo-open-ota/internal/crypto"
 	"expo-open-ota/internal/keyStore"
@@ -67,27 +69,48 @@ func writeResponse(w http.ResponseWriter, writer *multipart.Writer, buf *bytes.B
 }
 
 func putResponse(w http.ResponseWriter, r *http.Request, content interface{}, fieldName string, runtimeVersion string, protocolVersion int64, requestID string) {
-	signedHash, err := signDirectiveOrManifest(content, r.Header.Get("expo-expect-signature"))
+	contentJSON, err := json.Marshal(content)
 	if err != nil {
-		log.Printf("[RequestID: %s] Error signing content: %v", requestID, err)
-		http.Error(w, "Error signing content", http.StatusInternalServerError)
+		log.Printf("[RequestID: %s] Error marshaling content: %v", requestID, err)
+		http.Error(w, "Error marshaling content", http.StatusInternalServerError)
 		return
 	}
+
+	hash := sha256.Sum256(contentJSON)
+	digest := "sha-256=" + base64.StdEncoding.EncodeToString(hash[:])
+
 	headers := map[string][]string{
 		"Content-Disposition": {fmt.Sprintf("form-data; name=\"%s\"", fieldName)},
 		"Content-Type":        {"application/json"},
 		"content-type":        {"application/json; charset=utf-8"},
+		"digest":              {digest},
 	}
-	if signedHash != "" {
+
+	if r.Header.Get("expo-expect-signature") != "" {
+		privateKey := keyStore.GetPrivateExpoKey()
+		signedHash, signErr := crypto.SignRSASHA256(string(contentJSON), privateKey)
+		if signErr != nil {
+			log.Printf("[RequestID: %s] Error signing content: %v", requestID, signErr)
+			http.Error(w, "Error signing content", http.StatusInternalServerError)
+			return
+		}
 		headers["expo-signature"] = []string{fmt.Sprintf("sig=\"%s\", keyid=\"main\"", signedHash)}
 	}
-	writer, buf, err := createMultipartResponse(headers, content)
-	if err != nil {
-		log.Printf("[RequestID: %s] Error creating multipart response: %v", requestID, err)
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	field, fieldErr := writer.CreatePart(headers)
+	if fieldErr != nil {
+		log.Printf("[RequestID: %s] Error creating multipart field: %v", requestID, fieldErr)
 		http.Error(w, "Error creating multipart response", http.StatusInternalServerError)
 		return
 	}
-	writeResponse(w, writer, buf, protocolVersion, runtimeVersion, requestID)
+	if _, writeErr := field.Write(contentJSON); writeErr != nil {
+		log.Printf("[RequestID: %s] Error writing multipart content: %v", requestID, writeErr)
+		http.Error(w, "Error creating multipart response", http.StatusInternalServerError)
+		return
+	}
+	writeResponse(w, writer, &buf, protocolVersion, runtimeVersion, requestID)
 }
 
 func putUpdateInResponse(w http.ResponseWriter, r *http.Request, lastUpdate types.Update, platform string, protocolVersion int64, requestID string) {
