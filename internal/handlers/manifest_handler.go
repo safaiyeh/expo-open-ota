@@ -241,7 +241,7 @@ func ManifestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if lastUpdate == nil {
-		log.Printf("[RequestID: %s] No update found for runtimeVersion: %s in branch: %s", requestID, runtimeVersion, branch)
+		// Normal case: client is already on the latest version
 		putNoUpdateAvailableInResponse(w, r, runtimeVersion, protocolVersion, requestID)
 		return
 	}
